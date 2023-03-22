@@ -1,15 +1,21 @@
 <?php
+
 namespace Zenithies\Toolkit\ReadKey;
 
 class Interceptor
 {
-    // Windows Sequence: 224 + 72,77,80,75
-    // Nix Sequence: 27 + 91 + 65,67,66,68
+    // The escape code for Windows environments is chr 0 or 224
+    // The (standard) ansi escape sequence is 27 + 91 (\e[])
 
-    const KEY_LEFT  = 28;
-    const KEY_RIGHT = 29;
-    const KEY_UP    = 30;
-    const KEY_DOWN  = 31;
+    public const KEY_LEFT  = 28;
+    public const KEY_RIGHT = 29;
+    public const KEY_UP    = 30;
+    public const KEY_DOWN  = 31;
+
+    public const PHP_REQUIRED_MAJOR_VERSION = 8;
+    public const PHP_REQUIRED_MINOR_VERSION = 1;
+    public const WINDOWS_REQUIRED_VERSION = 10; # Note that Windows 11 still identifies as 10
+    public const WINDOWS_ARCHITECTURE = 64; # We need a 64-bit architecture
 
     private static $__instance = false;
     private $dll;
@@ -25,31 +31,50 @@ class Interceptor
         if (!self::isCLI()) {
             throw new \Exception('Interceptor has to run in CLI environment');
         }
-    }
-
-    public function init(): bool
-    {
+        // check PHP version
+        if (
+            PHP_MAJOR_VERSION >= self::PHP_REQUIRED_MAJOR_VERSION &&
+            PHP_MINOR_VERSION >= self::PHP_REQUIRED_MINOR_VERSION
+        ) {
+        } else {
+            throw new \Exception('PHP version must be ' . self::PHP_REQUIRED_MAJOR_VERSION . '.' . self::PHP_REQUIRED_MINOR_VERSION . ' or greater, currently using ' . PHP_VERSION);
+        }
+        // Windows specific checking
         if (self::isWindows()) {
+            // are we running (at least) windows 10?
+            if ((float)php_uname('r') < self::WINDOWS_REQUIRED_VERSION) {
+                throw new \Exception('Windows version ' . self::WINDOWS_REQUIRED_VERSION . ' or higher required.');
+            }
+            // are we on a 64-bit architecture?
+            if (strpos(php_uname('m'), self::WINDOWS_ARCHITECTURE) === false) {
+                throw new \Exception('This script requires a ' . self::WINDOWS_ARCHITECTURE . ' bit architecture, you are currently on ' . php_uname('m'));
+            }
+            // does the COM class exist?
             if (!\class_exists('COM')) {
-                self::eprintln('Warning: COM extension si require On Windows: extension=php_com_dotnet (PHP 8.1)');
+                self::eprintln('Warning: COM extension is required on windows. Please set extension=php_com_dotnet in your php.ini and register the DLL found in this repo.');
                 return false;
             }
-
+            // can we load the DLL?
             try {
                 $this->dll = new \COM('ZenithiesCLIKeys.ReadKey');
             } catch (\Throwable $e) {
                 self::eprintln("Unable to initialize ZenithiesCLIKeys.ReadKey, make sure it is registered by regsvr32 and you've picked architecture matching your PHP installation: {$e->getMessage()}");
                 return false;
             }
+        }
+    }
 
+    public function init(): bool
+    {
+        if (self::isWindows()) {
             $this->sequences = [
-                224 => [
+                224 => [ // normal arrow keys
                     72 => self::KEY_UP, // Up
                     77 => self::KEY_RIGHT, // Right
                     80 => self::KEY_DOWN, // Down
                     75 => self::KEY_LEFT, // Left
                 ],
-                0 => [
+                0 => [ // numpad arrow keys
                     72 => self::KEY_UP, // Up
                     77 => self::KEY_RIGHT, // Right
                     80 => self::KEY_DOWN, // Down
@@ -94,9 +119,7 @@ class Interceptor
 
         while (true) {
             $key = new \VARIANT(null, \VT_I8);
-
             $this->dll->GetKey($key);
-
             $key = (int)$key;
 
             if (isset($this->sequences[$key])) {
@@ -117,16 +140,18 @@ class Interceptor
 
     private function interceptNIX(): int
     {
-        \readline_callback_handler_install('', function(){});
+        \readline_callback_handler_install('', function () {
+        });
 
         $sequence = null;
 
         while (true) {
-            $s = [STDIN]; $w = null; $e = null;
+            $s = [STDIN];
+            $w = null;
+            $e = null;
 
             if (stream_select($s, $w, $e, null)) {
                 $key = \ord(\stream_get_contents(STDIN, 1));
-
                 if (isset($this->sequences[$key])) {
                     $sequence = $this->sequences;
                 }
@@ -183,7 +208,7 @@ class Interceptor
         $class = __CLASS__;
 
         if (self::$__instance === false) {
-            self::$__instance = new $class;
+            self::$__instance = new $class();
         }
 
         return self::$__instance;

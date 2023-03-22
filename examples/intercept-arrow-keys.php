@@ -1,4 +1,5 @@
 <?php
+
 chdir(__DIR__);
 
 $loader = __DIR__ . '/../vendor/autoload.php';
